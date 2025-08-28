@@ -70,10 +70,12 @@ infrastructure/
 ├── common.yaml                 # Shared variables
 ├── modules/
 │   ├── ecs-service/           # Container orchestration
+│   ├── github-repository/     # GitHub secrets & settings
 │   ├── database/              # Aurora Serverless v2
 │   ├── networking/            # VPC, ALB, CloudFront
 │   └── monitoring/            # CloudWatch, alarms
 └── environments/
+    ├── github/               # GitHub secrets management
     ├── production/            # Production config
     ├── staging/              # Staging config
     └── ephemeral/            # PR environments
@@ -85,11 +87,17 @@ infrastructure/
 - **Security scanning and compliance validation**
 - **Automated rollback on deployment failures**
 
-### 3. Developer Tools
+### 3. GitHub Secrets Management
+- **Terraform-managed secrets**: AWS credentials, database passwords
+- **Environment isolation**: Production, staging, development secrets
+- **Security features**: Branch protection, required reviews, environment gates
+- **Automated setup**: `scripts/setup-github-secrets.sh` for easy configuration
+
+### 4. Developer Tools
 - **`scripts/local-setup.sh`**: Complete local environment setup
 - **`docker/docker-compose.yml`**: Full development stack
 - **`scripts/dev.sh`**: Developer helper commands
-- **Comprehensive documentation and troubleshooting guides**
+- **Comprehensive documentation and troubleshooting guides
 
 ## 🎯 Success Criteria Achievement
 
@@ -115,8 +123,7 @@ infrastructure/
 
 ### Quick Start
 ```bash
-```bash
-git clone https://github.com/yourorg/app-delivery-framework.git
+git clone https://github.com/dschmidtadv/app-delivery-framework.git
 cd app-delivery-framework
 
 # Run local setup
@@ -124,7 +131,19 @@ chmod +x scripts/local-setup.sh
 ./scripts/local-setup.sh
 
 # Verify environment
-curl http://localhost:3000/health
+curl http://localhost/health
+```
+
+### GitHub Secrets Setup
+```bash
+# Configure GitHub secrets with Terraform
+chmod +x scripts/setup-github-secrets.sh
+./scripts/setup-github-secrets.sh
+
+# Deploy secrets to GitHub
+cd infrastructure/environments/github
+terragrunt init
+terragrunt apply
 ```
 
 ### Production Deployment
