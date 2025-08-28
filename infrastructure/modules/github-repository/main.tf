@@ -133,6 +133,32 @@ resource "github_actions_environment_secret" "staging_drupal_hash_salt" {
   plaintext_value = var.staging_drupal_hash_salt
 }
 
+# Development environment
+resource "github_repository_environment" "development" {
+  repository  = var.repository_name
+  environment = "development"
+
+  # Development can be deployed from any branch
+  deployment_branch_policy {
+    protected_branches     = false
+    custom_branch_policies = true
+  }
+}
+
+resource "github_actions_environment_secret" "dev_database_password" {
+  repository    = var.repository_name
+  environment   = github_repository_environment.development.environment
+  secret_name   = "DATABASE_PASSWORD"
+  plaintext_value = var.dev_database_password
+}
+
+resource "github_actions_environment_secret" "dev_drupal_hash_salt" {
+  repository    = var.repository_name
+  environment   = github_repository_environment.development.environment
+  secret_name   = "DRUPAL_HASH_SALT"
+  plaintext_value = var.dev_drupal_hash_salt
+}
+
 # Repository branch protection rules (commented out due to token scope limitations)
 # To enable: your GitHub token needs 'read:org' and 'read:discussion' scopes
 # resource "github_branch_protection" "main" {

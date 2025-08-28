@@ -13,6 +13,11 @@ output "staging_environment_name" {
   value       = github_repository_environment.staging.environment
 }
 
+output "development_environment_name" {
+  description = "The name of the development environment"
+  value       = github_repository_environment.development.environment
+}
+
 # Commented out since branch protection is disabled
 # output "main_branch_protection_id" {
 #   description = "The ID of the main branch protection rule"
@@ -39,6 +44,7 @@ output "environments_configured" {
   description = "List of configured GitHub environments"
   value = [
     github_repository_environment.production.environment,
-    github_repository_environment.staging.environment
+    github_repository_environment.staging.environment,
+    github_repository_environment.development.environment
   ]
 }

@@ -59,7 +59,7 @@ inputs = {
   aws_secret_access_key = get_env("AWS_SECRET_ACCESS_KEY", "")
   
   # Infrastructure endpoints (using static values for initial setup)
-  ecr_registry      = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+  ecr_registry      = "211125583596.dkr.ecr.us-east-1.amazonaws.com/app-delivery-framework"
   ecs_cluster_name  = "app-delivery-framework-prod"
   ecs_service_name  = "app-service-prod"
   rds_endpoint      = "app-db-prod.cluster-xyz.us-east-1.rds.amazonaws.com"
@@ -74,6 +74,9 @@ inputs = {
   
   staging_database_password = get_env("STAGING_DATABASE_PASSWORD", "staging_password_789")
   staging_drupal_hash_salt  = get_env("STAGING_DRUPAL_HASH_SALT", "staging_salt_789")
+  
+  dev_database_password = get_env("DEV_DATABASE_PASSWORD", "dev_password_456")
+  dev_drupal_hash_salt  = get_env("DEV_DRUPAL_HASH_SALT", "dev_salt_456")
   
   # Repository settings
   production_reviewers = ["dschmidtadv"]  # Replace with actual GitHub usernames

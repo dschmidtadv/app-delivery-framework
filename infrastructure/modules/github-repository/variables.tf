@@ -94,6 +94,18 @@ variable "staging_drupal_hash_salt" {
   sensitive   = true
 }
 
+variable "dev_database_password" {
+  description = "Development database password"
+  type        = string
+  sensitive   = true
+}
+
+variable "dev_drupal_hash_salt" {
+  description = "Development Drupal hash salt"
+  type        = string
+  sensitive   = true
+}
+
 variable "production_reviewers" {
   description = "List of GitHub usernames required to review production deployments"
   type        = list(string)
