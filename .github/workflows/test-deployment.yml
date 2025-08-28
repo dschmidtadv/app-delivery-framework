@@ -118,11 +118,21 @@ jobs:
 
       - name: Build Docker image
         run: |
+          # Ensure we have the full ECR registry URL
+          echo "ECR_REPOSITORY value: $ECR_REPOSITORY"
+          
+          # Extract registry and repo name
+          ECR_REGISTRY=$(echo $ECR_REPOSITORY | cut -d'/' -f1)
+          REPO_NAME=$(echo $ECR_REPOSITORY | cut -d'/' -f2)
+          
+          echo "ECR Registry: $ECR_REGISTRY"
+          echo "Repository Name: $REPO_NAME"
+          
           # Build the Docker image
           IMAGE_TAG="test-$(git rev-parse --short HEAD)-$(date +%s)"
-          FULL_IMAGE_URI="$ECR_REPOSITORY:$IMAGE_TAG"
+          FULL_IMAGE_URI="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
           
-          echo "Building image: $FULL_IMAGE_URI"
+          echo "Building image with URI: $FULL_IMAGE_URI"
           
           # First check if we have a Dockerfile
           if [ ! -f "docker/Dockerfile" ] && [ ! -f "Dockerfile" ]; then
