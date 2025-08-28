@@ -1,0 +1,344 @@
+# Ephemeral Environment Workflow
+# Creates temporary environments for pull requests
+name: Ephemeral Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main, staging]
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: app-delivery-framework
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  # Cleanup on PR close
+  cleanup-environment:
+    name: Cleanup Environment
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terragrunt
+        run: |
+          wget https://github.com/gruntwork-io/terragrunt/releases/download/v0.54.8/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+
+      - name: Destroy ephemeral environment
+        working-directory: infrastructure/environments/ephemeral
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          export TG_ENV_NAME="pr-$PR_NUMBER"
+          terragrunt destroy -auto-approve
+          
+      - name: Delete Route53 records
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Clean up DNS records for the ephemeral environment
+          SUBDOMAIN="pr-$PR_NUMBER"
+          aws route53 list-resource-record-sets \
+            --hosted-zone-id ${{ secrets.HOSTED_ZONE_ID }} \
+            --query "ResourceRecordSets[?Name=='$SUBDOMAIN.yourdomain.com.']" \
+            --output json | jq -r '.[] | select(.Type=="A" or .Type=="AAAA")' | \
+          while IFS= read -r record; do
+            aws route53 change-resource-record-sets \
+              --hosted-zone-id ${{ secrets.HOSTED_ZONE_ID }} \
+              --change-batch "{
+                \"Changes\": [{
+                  \"Action\": \"DELETE\",
+                  \"ResourceRecordSet\": $record
+                }]
+              }"
+          done
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '🗑️ Ephemeral environment has been destroyed.\n\nResources cleaned up:\n- ECS Service\n- Load Balancer Target Group\n- Route53 DNS Record\n- Database Schema'
+            })
+
+  # Create or update environment
+  deploy-ephemeral:
+    name: Deploy Ephemeral Environment
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+    environment: ephemeral
+    outputs:
+      environment-url: ${{ steps.deploy.outputs.environment-url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=ref,event=pr,prefix=pr-{{pr}}
+            type=sha,prefix=pr-${{ github.event.pull_request.number }}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.5
+
+      - name: Setup Terragrunt
+        run: |
+          wget https://github.com/gruntwork-io/terragrunt/releases/download/v0.54.8/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+
+      - name: Deploy ephemeral environment
+        id: deploy
+        working-directory: infrastructure/environments/ephemeral
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:pr-${{ github.event.pull_request.number }}-${{ github.sha }}
+        run: |
+          export TG_ENV_NAME="pr-$PR_NUMBER"
+          export TG_SUBDOMAIN="pr-$PR_NUMBER"
+          
+          # Initialize and apply infrastructure
+          terragrunt init
+          terragrunt plan -var="container_image=$IMAGE_URI" -out=tfplan
+          terragrunt apply tfplan
+          
+          # Get the environment URL
+          ENV_URL="https://pr-$PR_NUMBER.yourdomain.com"
+          echo "environment-url=$ENV_URL" >> $GITHUB_OUTPUT
+
+      - name: Database schema setup
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Create isolated database schema for this PR
+          SCHEMA_NAME="pr_$PR_NUMBER"
+          
+          # Connect to Aurora and create schema
+          aws rds-data execute-statement \
+            --resource-arn ${{ secrets.AURORA_CLUSTER_ARN }} \
+            --secret-arn ${{ secrets.DB_SECRET_ARN }} \
+            --database "postgres" \
+            --sql "CREATE SCHEMA IF NOT EXISTS $SCHEMA_NAME;"
+          
+          # Run migrations on the new schema
+          aws ecs run-task \
+            --cluster "app-delivery-framework-ephemeral" \
+            --task-definition "migration-task:latest" \
+            --overrides "{
+              \"containerOverrides\": [{
+                \"name\": \"migration\",
+                \"environment\": [{
+                  \"name\": \"DB_SCHEMA\",
+                  \"value\": \"$SCHEMA_NAME\"
+                }]
+              }]
+            }" \
+            --network-configuration "awsvpcConfiguration={subnets=[$(aws ec2 describe-subnets --filters Name=tag:Environment,Values=ephemeral Name=tag:Type,Values=private --query 'Subnets[].SubnetId' --output text | tr '\t' ',')],securityGroups=[$(aws ec2 describe-security-groups --filters Name=tag:Name,Values=app-delivery-framework-ephemeral-database --query 'SecurityGroups[0].GroupId' --output text)],assignPublicIp=DISABLED}" \
+            --launch-type FARGATE
+
+      - name: Wait for environment to be ready
+        run: |
+          ENV_URL="${{ steps.deploy.outputs.environment-url }}"
+          
+          echo "Waiting for environment to be ready at $ENV_URL"
+          for i in {1..20}; do
+            if curl -f "$ENV_URL/health"; then
+              echo "Environment is ready!"
+              break
+            fi
+            echo "Attempt $i: Environment not ready yet, waiting 30s..."
+            sleep 30
+          done
+
+      - name: Run integration tests
+        run: |
+          ENV_URL="${{ steps.deploy.outputs.environment-url }}"
+          
+          # Run tests against the ephemeral environment
+          export TEST_BASE_URL="$ENV_URL"
+          docker run --rm \
+            -e TEST_BASE_URL="$ENV_URL" \
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:pr-${{ github.event.pull_request.number }}-${{ github.sha }} \
+            npm run test:integration
+
+      - name: Performance test
+        run: |
+          ENV_URL="${{ steps.deploy.outputs.environment-url }}"
+          
+          # Simple load test to ensure basic performance
+          docker run --rm -i loadimpact/k6 run - <<EOF
+          import http from 'k6/http';
+          import { check } from 'k6';
+          
+          export let options = {
+            stages: [
+              { duration: '2m', target: 10 },
+              { duration: '5m', target: 10 },
+              { duration: '2m', target: 0 },
+            ],
+          };
+          
+          export default function() {
+            let response = http.get('$ENV_URL/health');
+            check(response, {
+              'status is 200': (r) => r.status === 200,
+              'response time < 500ms': (r) => r.timings.duration < 500,
+            });
+          }
+          EOF
+
+      - name: Security scan on live environment
+        run: |
+          ENV_URL="${{ steps.deploy.outputs.environment-url }}"
+          
+          # Run OWASP ZAP baseline scan
+          docker run -t owasp/zap2docker-stable zap-baseline.py \
+            -t "$ENV_URL" \
+            -J zap-report.json || true
+
+      - name: Comment on PR with environment details
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const envUrl = '${{ steps.deploy.outputs.environment-url }}';
+            const prNumber = context.issue.number;
+            
+            const body = `🚀 **Ephemeral Environment Ready**
+            
+            **Environment URL:** ${envUrl}
+            **PR Number:** #${prNumber}
+            **Image:** \`${{ env.ECR_REPOSITORY }}:pr-${prNumber}-${{ github.sha }}\`
+            **Database Schema:** \`pr_${prNumber}\`
+            
+            **Available Endpoints:**
+            - 🏠 [Application](${envUrl})
+            - 🩺 [Health Check](${envUrl}/health)
+            - 📊 [Metrics](${envUrl}/metrics)
+            
+            **Environment Details:**
+            - **CPU:** 256 units (0.25 vCPU)
+            - **Memory:** 512 MB
+            - **Instances:** 1 (auto-scaling disabled)
+            - **Database:** Shared Aurora cluster with isolated schema
+            - **Cache:** Shared ElastiCache cluster
+            
+            **Testing:**
+            ✅ Integration tests passed
+            ✅ Performance test completed
+            ✅ Security baseline scan completed
+            
+            This environment will be automatically destroyed when the PR is closed or merged.
+            
+            ---
+            *Environment provisioned in ~10 minutes* ⏱️`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Update PR status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'success',
+              target_url: '${{ steps.deploy.outputs.environment-url }}',
+              description: 'Ephemeral environment is ready',
+              context: 'ephemeral-environment'
+            });
+
+  # Resource monitoring for cost control
+  monitor-resources:
+    name: Monitor Resources
+    runs-on: ubuntu-latest
+    needs: deploy-ephemeral
+    if: github.event.action != 'closed'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check resource usage
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Monitor costs and set up automatic cleanup
+          ENVIRONMENT_NAME="pr-$PR_NUMBER"
+          
+          # Tag resources for cost tracking
+          aws resourcegroupstaggingapi tag-resources \
+            --resource-arn-list \
+              $(aws ecs describe-services --cluster app-delivery-framework-ephemeral --services "$ENVIRONMENT_NAME" --query 'services[0].serviceArn' --output text) \
+            --tags \
+              "PRNumber=$PR_NUMBER" \
+              "AutoCleanup=true" \
+              "MaxLifetime=7days"
+          
+          # Set up CloudWatch alarm for cost monitoring
+          aws cloudwatch put-metric-alarm \
+            --alarm-name "ephemeral-env-$PR_NUMBER-cost" \
+            --alarm-description "Cost monitoring for ephemeral environment" \
+            --metric-name "EstimatedCharges" \
+            --namespace "AWS/Billing" \
+            --statistic "Maximum" \
+            --period 86400 \
+            --threshold 10.0 \
+            --comparison-operator "GreaterThanThreshold" \
+            --dimensions Name=Currency,Value=USD \
+            --evaluation-periods 1

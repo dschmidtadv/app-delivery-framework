@@ -1,0 +1,108 @@
+{
+    "name": "app-delivery/drupal-framework",
+    "description": "Modern Drupal application delivery framework",
+    "type": "project",
+    "license": "MIT",
+    "repositories": [
+        {
+            "type": "composer",
+            "url": "https://packages.drupal.org/8"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "composer/installers": "^2.0",
+        "drupal/core-composer-scaffold": "^10.0",
+        "drupal/core-project-message": "^10.0",
+        "drupal/core-recommended": "^10.0",
+        "drupal/core-vendor-hardening": "^10.0",
+        "drush/drush": "^12.0",
+        "vlucas/phpdotenv": "^5.1",
+        "drupal/redis": "^1.7",
+        "drupal/memcache": "^2.5",
+        "drupal/devel": "^5.0",
+        "drupal/admin_toolbar": "^3.4",
+        "drupal/pathauto": "^1.12",
+        "drupal/token": "^1.13",
+        "drupal/metatag": "^2.0"
+    },
+    "require-dev": {
+        "drupal/core-dev": "^10.0",
+        "phpunit/phpunit": "^9.5",
+        "behat/behat": "^3.13",
+        "drupal/drupal-extension": "^5.0",
+        "phpspec/prophecy-phpunit": "^2.0"
+    },
+    "conflict": {
+        "drupal/drupal": "*"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "config": {
+        "allow-plugins": {
+            "composer/installers": true,
+            "drupal/core-composer-scaffold": true,
+            "drupal/core-project-message": true,
+            "drupal/core-vendor-hardening": true,
+            "phpstan/extension-installer": true,
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        },
+        "sort-packages": true
+    },
+    "extra": {
+        "drupal-scaffold": {
+            "locations": {
+                "web-root": "./"
+            },
+            "file-mapping": {
+                "[web-root]/sites/development.services.yml": false
+            }
+        },
+        "installer-paths": {
+            "core": ["type:drupal-core"],
+            "libraries/{$name}": ["type:drupal-library"],
+            "modules/contrib/{$name}": ["type:drupal-module"],
+            "profiles/contrib/{$name}": ["type:drupal-profile"],
+            "themes/contrib/{$name}": ["type:drupal-theme"],
+            "drush/Commands/contrib/{$name}": ["type:drupal-drush"],
+            "modules/custom/{$name}": ["type:drupal-custom-module"],
+            "profiles/custom/{$name}": ["type:drupal-custom-profile"],
+            "themes/custom/{$name}": ["type:drupal-custom-theme"]
+        },
+        "drupal-core-project-message": {
+            "include-keys": [
+                "homepage",
+                "support"
+            ],
+            "post-create-project-cmd-message": [
+                "<bg=blue;fg=white>                                                         </>",
+                "<bg=blue;fg=white>  Congratulations, you've installed the Drupal codebase  </>",
+                "<bg=blue;fg=white>  from the drupal/recommended-project template!          </>",
+                "<bg=blue;fg=white>                                                         </>",
+                "",
+                "<bg=yellow;fg=black>Next steps</>:",
+                "  * Install the site: https://www.drupal.org/docs/installing-drupal",
+                "  * Read the user guide: https://www.drupal.org/docs/user-guide/en/index.html",
+                "  * Get support: https://www.drupal.org/support",
+                "  * Get involved with the Drupal community:",
+                "      https://www.drupal.org/getting-involved",
+                "  * Remove the plugin that prints this message:",
+                "      composer remove drupal/core-project-message"
+            ]
+        }
+    },
+    "scripts": {
+        "pre-install-cmd": [
+            "DrupalProject\\composer\\ScriptHandler::checkComposerVersion"
+        ],
+        "pre-update-cmd": [
+            "DrupalProject\\composer\\ScriptHandler::checkComposerVersion"
+        ],
+        "post-install-cmd": [
+            "@composer drupal:scaffold"
+        ],
+        "post-update-cmd": [
+            "@composer drupal:scaffold"
+        ]
+    }
+}

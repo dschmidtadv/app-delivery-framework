@@ -1,0 +1,334 @@
+# Production Deployment Workflow
+# Triggered on pushes to main branch for production deployments
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip test execution'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: app-delivery-framework
+  ENVIRONMENT: production
+
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read    # Required for checkout
+  security-events: write  # Required for security scanning
+
+jobs:
+  # Security and Quality Checks
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Build and Test
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    needs: security-scan
+    outputs:
+      image-tag: ${{ steps.build.outputs.image-tag }}
+      image-uri: ${{ steps.build.outputs.image-uri }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Set outputs
+        run: |
+          echo "image-tag=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}" >> $GITHUB_OUTPUT
+          echo "image-uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}" >> $GITHUB_OUTPUT
+
+      - name: Run tests
+        if: ${{ !inputs.skip_tests }}
+        run: |
+          # Run application tests against the built image
+          docker run --rm \
+            -e NODE_ENV=test \
+            ${{ steps.build.outputs.image-uri }} \
+            npm test
+
+  # Infrastructure Deployment
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.5
+
+      - name: Setup Terragrunt
+        run: |
+          wget https://github.com/gruntwork-io/terragrunt/releases/download/v0.54.8/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+
+      - name: Terragrunt Init
+        working-directory: infrastructure/environments/production
+        run: terragrunt init
+
+      - name: Terragrunt Plan
+        working-directory: infrastructure/environments/production
+        run: |
+          terragrunt plan \
+            -var="container_image=${{ needs.build-and-test.outputs.image-uri }}" \
+            -out=tfplan
+
+      - name: Terragrunt Apply
+        working-directory: infrastructure/environments/production
+        run: terragrunt apply tfplan
+
+  # Application Deployment with Blue/Green Strategy
+  deploy-application:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: [build-and-test, deploy-infrastructure]
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to ECS with Blue/Green
+        run: |
+          # Get current service details
+          CLUSTER_NAME="app-delivery-framework-production"
+          SERVICE_NAME="web-app"
+          
+          # Update service with new image
+          aws ecs update-service \
+            --cluster $CLUSTER_NAME \
+            --service $SERVICE_NAME \
+            --task-definition $(aws ecs describe-services \
+              --cluster $CLUSTER_NAME \
+              --services $SERVICE_NAME \
+              --query 'services[0].taskDefinition' \
+              --output text | sed 's/:.*/:${{ needs.build-and-test.outputs.image-tag }}/') \
+            --force-new-deployment
+
+      - name: Wait for deployment to complete
+        run: |
+          CLUSTER_NAME="app-delivery-framework-production"
+          SERVICE_NAME="web-app"
+          
+          echo "Waiting for service to reach steady state..."
+          aws ecs wait services-stable \
+            --cluster $CLUSTER_NAME \
+            --services $SERVICE_NAME \
+            --cli-read-timeout 1200 \
+            --cli-connect-timeout 60
+
+      - name: Health check
+        run: |
+          # Perform health checks on the new deployment
+          HEALTH_URL="https://app.yourdomain.com/health"
+          
+          for i in {1..10}; do
+            if curl -f $HEALTH_URL; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Health check attempt $i failed, retrying in 30s..."
+            sleep 30
+          done
+          
+          echo "Health check failed after 10 attempts"
+          exit 1
+
+  # Database Migration (if needed)
+  migrate-database:
+    name: Database Migration
+    runs-on: ubuntu-latest
+    needs: deploy-application
+    environment: production
+    if: contains(github.event.head_commit.message, '[migrate]')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run database migrations
+        run: |
+          # Run migrations using ECS task
+          CLUSTER_NAME="app-delivery-framework-production"
+          SUBNET_IDS=$(aws ec2 describe-subnets \
+            --filters "Name=tag:Environment,Values=production" "Name=tag:Type,Values=private" \
+            --query 'Subnets[].SubnetId' \
+            --output text | tr '\t' ',')
+          
+          SECURITY_GROUP_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=tag:Name,Values=app-delivery-framework-production-database" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text)
+
+          # Run migration task
+          aws ecs run-task \
+            --cluster $CLUSTER_NAME \
+            --task-definition "migration-task:latest" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SECURITY_GROUP_ID],assignPublicIp=DISABLED}" \
+            --launch-type FARGATE
+
+  # Rollback capability
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: [deploy-application, migrate-database]
+    if: failure()
+    environment: production
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Rollback deployment
+        run: |
+          CLUSTER_NAME="app-delivery-framework-production"
+          SERVICE_NAME="web-app"
+          
+          # Get previous task definition
+          PREVIOUS_TASK_DEF=$(aws ecs list-task-definitions \
+            --family-prefix $SERVICE_NAME \
+            --status ACTIVE \
+            --sort DESC \
+            --query 'taskDefinitionArns[1]' \
+            --output text)
+          
+          if [ "$PREVIOUS_TASK_DEF" != "None" ]; then
+            echo "Rolling back to: $PREVIOUS_TASK_DEF"
+            aws ecs update-service \
+              --cluster $CLUSTER_NAME \
+              --service $SERVICE_NAME \
+              --task-definition $PREVIOUS_TASK_DEF \
+              --force-new-deployment
+            
+            # Wait for rollback to complete
+            aws ecs wait services-stable \
+              --cluster $CLUSTER_NAME \
+              --services $SERVICE_NAME
+          else
+            echo "No previous task definition found for rollback"
+            exit 1
+          fi
+
+      - name: Notify rollback
+        run: |
+          # Send notification about rollback
+          echo "Deployment failed and was rolled back"
+          # Add your notification logic here (Slack, email, etc.)
+
+  # Post-deployment validation
+  post-deployment-tests:
+    name: Post-deployment Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-application, migrate-database]
+    if: success()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run integration tests
+        run: |
+          # Run comprehensive integration tests against production
+          BASE_URL="https://app.yourdomain.com"
+          
+          # API health check
+          curl -f "$BASE_URL/health" || exit 1
+          
+          # Database connectivity test
+          curl -f "$BASE_URL/api/health/database" || exit 1
+          
+          # Cache connectivity test
+          curl -f "$BASE_URL/api/health/cache" || exit 1
+          
+          echo "All post-deployment tests passed"
+
+      - name: Update deployment status
+        run: |
+          echo "Deployment completed successfully"
+          echo "Image: ${{ needs.build-and-test.outputs.image-uri }}"
+          echo "Environment: production"
+          echo "Commit: ${{ github.sha }}"

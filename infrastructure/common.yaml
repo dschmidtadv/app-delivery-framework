@@ -1,0 +1,109 @@
+# Common Configuration Variables
+# This file contains shared configuration across all environments
+
+# Project metadata
+project_name: "app-delivery-framework"
+team_name: "platform-team"
+cost_center: "engineering"
+owner_email: "platform-team@yourcompany.com"
+
+# AWS configuration
+aws_region: "us-west-2"
+aws_secondary_region: "us-east-1"  # For disaster recovery
+
+# Account IDs for environment validation
+production_account_id: "123456789012"  # Replace with your production AWS account ID
+staging_account_id: "123456789012"     # Replace with your staging AWS account ID
+development_account_id: "123456789012" # Replace with your development AWS account ID
+
+# Container registry
+ecr_repository: "123456789012.dkr.ecr.us-west-2.amazonaws.com/app-delivery-framework"
+
+# Domain and DNS configuration
+root_domain: "yourdomain.com"
+hosted_zone_id: "Z1234567890123"  # Replace with your Route53 hosted zone ID
+ssl_certificate_id: "12345678-1234-1234-1234-123456789012"  # Replace with your ACM certificate ID
+
+# Network configuration
+vpc_cidr: "10.0.0.0/16"
+availability_zones: ["us-west-2a", "us-west-2b", "us-west-2c"]
+
+# Database configuration
+database_engine: "aurora-postgresql"
+database_engine_version: "15.4"
+database_port: 5432
+
+# Cache configuration
+cache_engine: "valkey"
+cache_engine_version: "7.2"
+
+# Security configuration
+enable_encryption: true
+enable_deletion_protection: true
+enable_backup_encryption: true
+
+# Monitoring and logging
+log_retention_days: 30
+enable_container_insights: true
+enable_performance_insights: true
+
+# Cost management
+enable_cost_anomaly_detection: true
+cost_anomaly_threshold: 100  # USD
+budget_limit_monthly: 500    # USD
+
+# Backup configuration
+backup_retention_period: 7   # days for non-production
+production_backup_retention: 35  # days for production
+
+# Compliance and governance
+required_tags:
+  - "Environment"
+  - "Project" 
+  - "Owner"
+  - "CostCenter"
+  - "ManagedBy"
+
+# Feature flags
+enable_xray_tracing: true
+enable_service_mesh: false
+enable_canary_deployments: true
+enable_blue_green_database: true
+
+# Performance targets
+target_cpu_utilization: 70
+target_memory_utilization: 80
+max_response_time_ms: 200
+min_throughput_rps: 100
+max_throughput_rps: 500
+
+# Auto-scaling configuration
+scale_in_cooldown: 300   # seconds
+scale_out_cooldown: 300  # seconds
+
+# Deployment configuration
+deployment_timeout: 600  # seconds
+health_check_grace_period: 300  # seconds
+health_check_interval: 30       # seconds
+
+# Security groups
+allowed_cidr_blocks:
+  - "10.0.0.0/16"  # VPC CIDR
+  - "0.0.0.0/0"    # Public internet (for ALB only)
+
+# Secrets configuration
+secrets_rotation_days: 90
+secrets_deletion_window: 7
+
+# Disaster recovery
+rto_minutes: 15  # Recovery Time Objective
+rpo_minutes: 5   # Recovery Point Objective
+
+# Development environment configuration
+dev_enable_debug_logging: true
+dev_enable_hot_reload: true
+dev_resource_limits:
+  cpu: 256
+  memory: 512
+  min_capacity: 1
+  max_capacity: 2
