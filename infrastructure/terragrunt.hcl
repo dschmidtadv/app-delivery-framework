@@ -1,18 +1,6 @@
 # Terragrunt Configuration for Multi-Environment Management
 # This file defines common configuration that gets inherited by all environments
 
-terraform {
-  # Use the latest Terraform version that supports the AWS provider features we need
-  required_version = ">= 1.5"
-  
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
 # Remote state configuration - shared across all environments
 remote_state {
   backend = "s3"
@@ -25,37 +13,10 @@ remote_state {
   config = {
     bucket         = "${get_env("PROJECT_NAME", "app-delivery-framework")}-terraform-state-${get_aws_account_id()}"
     key            = "${path_relative_to_include()}/terraform.tfstate"
-    region         = "us-west-2"
+    region         = "us-east-1"
     encrypt        = true
     dynamodb_table = "${get_env("PROJECT_NAME", "app-delivery-framework")}-terraform-locks"
-    
-    # S3 bucket versioning for state history
-    versioning = true
-    
-    # Prevent accidental deletion
-    force_destroy = false
   }
-}
-
-# Generate common provider configuration
-generate "provider" {
-  path = "provider.tf"
-  if_exists = "overwrite_terragrunt"
-  contents = <<EOF
-provider "aws" {
-  region = var.aws_region
-  
-  default_tags {
-    tags = {
-      Project     = var.project_name
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-      Owner       = var.team_name
-      CostCenter  = var.cost_center
-    }
-  }
-}
-EOF
 }
 
 # Common variables that all environments will use
@@ -92,6 +53,3 @@ retryable_errors = [
   "(?s).*Throttling.*",
   "(?s).*TooManyRequestsException.*"
 ]
-
-# Skip Terragrunt outputs in CI/CD for faster execution
-skip_outputs = get_env("CI", "") != ""

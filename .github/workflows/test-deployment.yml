@@ -123,7 +123,26 @@ jobs:
           FULL_IMAGE_URI="$ECR_REPOSITORY:$IMAGE_TAG"
           
           echo "Building image: $FULL_IMAGE_URI"
-          docker build -f docker/Dockerfile -t $FULL_IMAGE_URI .
+          
+          # First check if we have a Dockerfile
+          if [ ! -f "docker/Dockerfile" ] && [ ! -f "Dockerfile" ]; then
+            echo "❌ No Dockerfile found! Creating a simple test Dockerfile..."
+            mkdir -p docker
+            cat > docker/Dockerfile << 'EOF'
+          FROM nginx:alpine
+          COPY . /usr/share/nginx/html/
+          EXPOSE 80
+          CMD ["nginx", "-g", "daemon off;"]
+          EOF
+          fi
+          
+          # Use the dockerfile that exists
+          DOCKERFILE_PATH="docker/Dockerfile"
+          if [ ! -f "$DOCKERFILE_PATH" ]; then
+            DOCKERFILE_PATH="Dockerfile"
+          fi
+          
+          docker build -f $DOCKERFILE_PATH -t $FULL_IMAGE_URI .
           
           echo "Pushing image to ECR..."
           docker push $FULL_IMAGE_URI

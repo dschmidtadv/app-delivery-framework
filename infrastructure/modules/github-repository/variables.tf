@@ -3,6 +3,18 @@ variable "repository_name" {
   type        = string
 }
 
+variable "github_token" {
+  description = "GitHub personal access token with repo and admin:repo_hook permissions"
+  type        = string
+  sensitive   = true
+}
+
+variable "github_owner" {
+  description = "GitHub repository owner (username or organization)"
+  type        = string
+  default     = "dschmidtadv"
+}
+
 variable "aws_access_key_id" {
   description = "AWS Access Key ID for GitHub Actions"
   type        = string

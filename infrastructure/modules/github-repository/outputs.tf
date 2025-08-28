@@ -13,10 +13,11 @@ output "staging_environment_name" {
   value       = github_repository_environment.staging.environment
 }
 
-output "main_branch_protection_id" {
-  description = "The ID of the main branch protection rule"
-  value       = github_branch_protection.main.id
-}
+# Commented out since branch protection is disabled
+# output "main_branch_protection_id" {
+#   description = "The ID of the main branch protection rule"
+#   value       = github_branch_protection.main.id
+# }
 
 output "secrets_configured" {
   description = "List of configured GitHub Actions secrets"

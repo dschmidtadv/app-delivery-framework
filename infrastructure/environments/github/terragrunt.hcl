@@ -34,49 +34,36 @@ generate "aws_provider" {
   contents = <<EOF
 provider "aws" {
   region = var.aws_region
+  profile = "terraform-user"  # Use your terraform-user profile
 }
 EOF
 }
 
-# Data sources to get outputs from other environments
-dependency "production" {
-  config_path = "../production"
-  mock_outputs = {
-    ecr_registry_url     = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
-    ecs_cluster_name     = "app-delivery-framework-prod"
-    ecs_service_name     = "app-service-prod"
-    rds_endpoint         = "app-db-prod.cluster-xyz.us-east-1.rds.amazonaws.com"
-    cache_endpoint       = "app-cache-prod.xyz.cache.amazonaws.com"
-  }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
-}
-
-dependency "staging" {
-  config_path = "../staging"
-  mock_outputs = {
-    ecr_registry_url     = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
-    ecs_cluster_name     = "app-delivery-framework-staging"
-    ecs_service_name     = "app-service-staging"
-    rds_endpoint         = "app-db-staging.cluster-xyz.us-east-1.rds.amazonaws.com"
-    cache_endpoint       = "app-cache-staging.xyz.cache.amazonaws.com"
-  }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
+# Local values to read AWS credentials from local config
+locals {
+  # AWS profile to use
+  aws_profile = "terraform-user"
 }
 
 inputs = {
+  # Repository configuration
   repository_name = "app-delivery-framework"
   aws_region      = "us-east-1"
   
-  # AWS credentials for GitHub Actions (use environment variables or AWS IAM user)
-  aws_access_key_id     = get_env("GITHUB_AWS_ACCESS_KEY_ID", "")
-  aws_secret_access_key = get_env("GITHUB_AWS_SECRET_ACCESS_KEY", "")
+  # GitHub configuration (set these as environment variables)
+  github_token = get_env("GITHUB_TOKEN", "")
+  github_owner = get_env("GITHUB_OWNER", "dschmidtadv")
   
-  # Infrastructure outputs from production environment
-  ecr_registry      = dependency.production.outputs.ecr_registry_url
-  ecs_cluster_name  = dependency.production.outputs.ecs_cluster_name
-  ecs_service_name  = dependency.production.outputs.ecs_service_name
-  rds_endpoint      = dependency.production.outputs.rds_endpoint
-  cache_endpoint    = dependency.production.outputs.cache_endpoint
+  # AWS credentials for GitHub Actions (read from environment or use static for demo)
+  aws_access_key_id     = get_env("AWS_ACCESS_KEY_ID", "")
+  aws_secret_access_key = get_env("AWS_SECRET_ACCESS_KEY", "")
+  
+  # Infrastructure endpoints (using static values for initial setup)
+  ecr_registry      = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+  ecs_cluster_name  = "app-delivery-framework-prod"
+  ecs_service_name  = "app-service-prod"
+  rds_endpoint      = "app-db-prod.cluster-xyz.us-east-1.rds.amazonaws.com"
+  cache_endpoint    = "app-cache-prod.xyz.cache.amazonaws.com"
   
   # Secrets (use environment variables or Terraform Cloud variables)
   database_password = get_env("DATABASE_PASSWORD", "development_password_123")
@@ -93,10 +80,10 @@ inputs = {
   required_reviewers   = 1
   
   # Optional integrations
-  terraform_api_token = get_env("TF_API_TOKEN", null)
-  slack_webhook_url   = get_env("SLACK_WEBHOOK_URL", null)
+  terraform_api_token = get_env("TF_API_TOKEN", "") != "" ? get_env("TF_API_TOKEN", "") : null
+  slack_webhook_url   = get_env("SLACK_WEBHOOK_URL", "") != "" ? get_env("SLACK_WEBHOOK_URL", "") : null
   
   # Deployment webhooks (optional)
-  deployment_webhook_url    = get_env("DEPLOYMENT_WEBHOOK_URL", null)
-  deployment_webhook_secret = get_env("DEPLOYMENT_WEBHOOK_SECRET", null)
+  deployment_webhook_url    = get_env("DEPLOYMENT_WEBHOOK_URL", "") != "" ? get_env("DEPLOYMENT_WEBHOOK_URL", "") : null
+  deployment_webhook_secret = get_env("DEPLOYMENT_WEBHOOK_SECRET", "") != "" ? get_env("DEPLOYMENT_WEBHOOK_SECRET", "") : null
 }
