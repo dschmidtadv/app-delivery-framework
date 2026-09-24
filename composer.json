@@ -2,7 +2,7 @@
     "name": "app-delivery/drupal-framework",
     "description": "Modern Drupal application delivery framework",
     "type": "project",
-    "license": "MIT",
+    "license": "GPL-3.0-or-later",
     "repositories": [
         {
             "type": "composer",

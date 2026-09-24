@@ -183,3 +183,9 @@ git push origin main  # Triggers automated deployment
 This framework delivers a production-ready, cost-effective, and developer-friendly application delivery platform that scales from startup to enterprise while maintaining operational simplicity and security best practices.
 
 The complete implementation provides everything needed to transition from traditional deployment methods to a modern, serverless-first approach that empowers development teams while minimizing operational overhead.
+
+## License
+
+Copyright (C) 2026 Dietrich Gottfried Schmidt
+
+GNU General Public License v3.0 — See [LICENSE](LICENSE) file for details.
